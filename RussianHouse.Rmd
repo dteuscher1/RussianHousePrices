@@ -1,0 +1,115 @@
+---
+title: "Russian Housing Market"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+library(caret)
+library(DataExplorer)
+library(rgdal)
+library(RColorBrewer)
+library(sp)
+```
+
+```{r}
+train <- read.csv("train.csv")
+test <- read.csv("test.csv")
+head(train)
+
+plot_missing(train[, 1:50])
+plot_missing(train[, 51:100])
+plot_missing(train[,101:150])
+plot_missing(train[,151:200])
+plot_missing(train[,201:250])
+plot_missing(train[,251:292])
+
+# Although these plots are easy, there are too many variables to have a single plot. As an alternative, I will calculate the percentage of missing values for each variable and then plot the ones that are greater than 0. 
+
+missing_vals <- function(x) {
+   value <-  round((sum(is.na(x))/length(x)) * 100, digits = 2) 
+   return(value)
+}
+miss_pct <- map_dbl(train, missing_vals)
+
+miss_pct.df <- data.frame(pct = miss_pct, Variable = names(miss_pct)) %>% 
+    filter(pct > 0)
+
+ggplot(miss_pct.df, aes(x = reorder(Variable, pct), y = pct)) + 
+    geom_bar(stat = "identity", fill = "#DA291C") +
+    labs(x = "Percentage of missing values", y = "Variable") +
+    coord_flip()
+
+nrow(miss_pct.df)
+variable_type <- map_df(train, function(x){sum(is.numeric(x))})
+names(variable_type)[variable_type == 0]
+head(train$timestamp)
+ncol(train)
+```
+There are a total of 292 columns in the training set. There are 41 variables that have more than 1% of values missing. There are 10 variables that have missing values, but 1% or less of the observations are missing that value. There are 276 numeric variables and 15 categorical variables and 1 variable that should be a date variable. As a result, I will change the timestamp to a date variable. 
+
+I want to visualize the data on maps, so I'm going to start my EDA by doing that. I'm following a lot of this notebook (https://www.kaggle.com/jtremoureux/map-visualizations-with-external-shapefile), but hopefully will do some of my own stuff as well. 
+
+```{r}
+districts <- read_delim("districts.csv", delim = ";") %>% 
+    select(ID, `English Name`, `Russian Name`)
+areas <- read_delim("regions.csv", delim = ";")
+shp <- readOGR(dsn = "moscow_districts/", layer = "moscow_adm")
+
+# Get the box for polygons
+bbox <- shp@bbox
+
+# Get centroids
+centroids <- coordinates(shp)
+mo_shp <- shp
+mo_shp$long_c <- centroids[,1]
+mo_shp$lat_c <- centroids[,2]
+mo_data <- mo_shp@data
+mo_data <- mo_data %>% 
+    left_join(districts, by = c("OKRUGS" = "English Name")) %>% 
+    left_join(areas, by = c("RAION" = "English"))
+mo_shp$district <- mo_data$`Russian Name`
+mo_shp$area <- mo_data$Russian
+mo_shp$district <- factor(mo_shp$district)
+mo_shp$area <- factor(mo_shp$area)
+head(mo_shp)
+```
+
+```{r}
+okrugs_pal <- brewer.pal(12, "Paired") # Define a nice color palette with RColorBrewer
+plot(mo_shp, border = "#57595b", col = okrugs_pal[as.numeric(mo_shp$district)], main = "Округи и Районы")
+points(centroids, col = "black", pch = 20, cex = 0.3)
+legend("right", title = "Округ", legend = sort(unique(mo_shp$district)),  fill = okrugs_pal, border = "#57595b", cex=0.8)
+```
+
+```{r}
+# These plots can be interchanged between Russian and English names. I hate transliterated Russian, so almost all plots that I do are in Russian, but all that needs to be done is to switch the column used in the dataset; District corresponds with OKRUGS and area with RAION
+spplot(mo_shp, c("district"), main = "Округи и районы Москвы", col.regions=okrugs_pal)
+```
+
+I will add some summary characteristics of houses in each area
+```{r}
+head(train)
+
+area_frame <- train %>%
+    group_by(sub_area) %>%
+    summarize(MedYr = median(build_year, na.rm = TRUE),
+              AvgSalePrice = mean(price_doc),
+              AvgSqFt = mean(full_sq))
+area_frame
+head(area_frame)
+head(mo_shp)
+mo_data <- mo_data %>% left_join(area_frame, by = c("RAION" = "sub_area"))
+area_frame
+head(mo_data)
+mo_shp@data <- mo_data
+mo_shp$build_year <- mo_data$MedYr
+mo_shp$AvgSalePrice <- mo_data$AvgSalePrice
+mo_shp$AvgSqFt
+head(mo_shp)
+ncolors <- 15
+pal3 <- colorRampPalette(c("grey90", "red"))(ncolors)
+spplot(mo_shp, c("AvgSqFt"), main = "Transaction prices", col.regions = pal3,
+       sub = "", cuts = ncolors-1, col = "transparent")
+```
+
