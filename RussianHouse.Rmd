@@ -10,6 +10,11 @@ library(DataExplorer)
 library(rgdal)
 library(RColorBrewer)
 library(sp)
+library(lubridate)
+library(plotly)
+library(ggthemes)
+library(mapproj)
+library(ggiraph)
 ```
 
 ```{r}
@@ -33,20 +38,41 @@ missing_vals <- function(x) {
 miss_pct <- map_dbl(train, missing_vals)
 
 miss_pct.df <- data.frame(pct = miss_pct, Variable = names(miss_pct)) %>% 
-    filter(pct > 0)
+    filter(pct > 1)
 
 ggplot(miss_pct.df, aes(x = reorder(Variable, pct), y = pct)) + 
     geom_bar(stat = "identity", fill = "#DA291C") +
     labs(x = "Percentage of missing values", y = "Variable") +
     coord_flip()
 
-nrow(miss_pct.df)
+
 variable_type <- map_df(train, function(x){sum(is.numeric(x))})
-names(variable_type)[variable_type == 0]
-head(train$timestamp)
-ncol(train)
+cat_names <- names(variable_type)[variable_type == 0]
+quant_names <- names(variable_type)[variable_type == 1]
+miss_names <- names(miss_pct)[miss_pct != 0]
+
+sum(cat_names %in% miss_names)
+sum(quant_names %in% miss_names)
 ```
-There are a total of 292 columns in the training set. There are 41 variables that have more than 1% of values missing. There are 10 variables that have missing values, but 1% or less of the observations are missing that value. There are 276 numeric variables and 15 categorical variables and 1 variable that should be a date variable. As a result, I will change the timestamp to a date variable. 
+There are a total of 292 columns in the training set. There are 41 variables that have more than 1% of values missing. There are 10 variables that have missing values, but 1% or less of the observations are missing that value. All 51 categories that have missing values are numeric variables, so there could be values imputed for all of those variables. There are 276 numeric variables and 15 categorical variables and 1 variable that should be a date variable. As a result, I will change the timestamp to a date variable. 
+
+```{r}
+train$timestamp <- ymd(train$timestamp)
+test$timestamp <- ymd(test$timestamp)
+```
+
+Next, I want to look at the distribution of the response variable
+```{r}
+ggplot(train, aes(x = price_doc)) + geom_histogram(fill = "firebrick")
+```
+The distribution is skewed right, which isn't surprised when dealing with house prices. Most houses will be a similar price, but there are a small number of houses that are extremely expensive. I will likely use a model that uses the natural log of the sale price becuase it won't be as heavily influenced by the outliers. 
+
+There are still a few outliers, but the distribution of sale price looks a lot better than before. 
+
+```{r}
+ggplot(train, aes(x= log(price_doc))) + geom_histogram(fill = "firebrick")
+```
+
 
 I want to visualize the data on maps, so I'm going to start my EDA by doing that. I'm following a lot of this notebook (https://www.kaggle.com/jtremoureux/map-visualizations-with-external-shapefile), but hopefully will do some of my own stuff as well. 
 
@@ -95,7 +121,14 @@ area_frame <- train %>%
     group_by(sub_area) %>%
     summarize(MedYr = median(build_year, na.rm = TRUE),
               AvgSalePrice = mean(price_doc),
-              AvgSqFt = mean(full_sq))
+              AvgSqFt = mean(full_sq), 
+              PriceSqft = mean(price_doc/full_sq),
+              Floors = mean(floor),
+              AvgPop = mean(raion_popul),
+              AvgInd = mean(indust_part),
+              AvgWorkAge = mean(work_all),
+              Bld19 = mean(build_count_after_1995))
+str(train)
 area_frame
 head(area_frame)
 head(mo_shp)
@@ -109,7 +142,49 @@ mo_shp$AvgSqFt
 head(mo_shp)
 ncolors <- 15
 pal3 <- colorRampPalette(c("grey90", "red"))(ncolors)
-spplot(mo_shp, c("AvgSqFt"), main = "Transaction prices", col.regions = pal3,
+spplot(mo_shp, c("AvgPop"), main = "Transaction prices", col.regions = pal3,
        sub = "", cuts = ncolors-1, col = "transparent")
+```
+
+```{r}
+
+data_area <- train %>%
+  filter(!duplicated(train$sub_area)) %>% # select one row for each area
+  select(sub_area:build_count_after_1995) # select the area properties
+# Add it to our SPDF
+
+mo_data <- mo_data %>% full_join(data_area, by = c("RAION" = "sub_area"))
+mo_shp@data <- mo_data
+
+
+mo_df <- mo_shp %>% fortify(region = 'Russian')
+mo_df$id <- as.factor(mo_df$id)
+head(mo_df)
+gg_df <- full_join(mo_df, mo_shp@data, by = c("id" = "Russian"))
+
+head(gg_df)
+p2 <- ggplot(data=gg_df, mapping=aes(x=long, y=lat, group=group, fill=log(AvgSalePrice))) + geom_polygon(color=NA) + scale_fill_distiller(palette="RdBu") + xlab("Lon") + ylab("Lat") + labs(fill="Log(Sale Price)") + coord_map()
+
+ggplotly(p2)
+p1 <- ggplot(gg_df, aes(long, lat, group=group, fill=green_zone_part)) +
+  theme_classic() +
+  geom_polygon() +
+  geom_path(color="white", size = 0.05) +
+  coord_map() + theme_tufte(ticks = FALSE) + 
+  scale_fill_gradient(low = "#e5f5e0", high = "#00441b") +
+  theme(axis.text = element_blank(), axis.title = element_blank())
+
+```
+
+```{r}
+p <- ggplot(gg_df, aes(long, lat, group=group)) + theme_classic() +
+  geom_polygon_interactive(aes(fill=raion_popul, # javascript to run on click
+                               data_id = id)) + # column associated to polygon element
+  coord_map() + theme_tufte(ticks = FALSE) +
+  scale_fill_continuous(low = "#f7f4f9", high = "#980043") +
+  theme(axis.text = element_blank(), axis.title = element_blank(),
+        plot.title = element_text(hjust = 0.8, face = "bold")) +
+  ggtitle(" Click on the map! 👌 ")
+p
 ```
 
