@@ -205,8 +205,9 @@ small.test <- test %>% select(full_sq, life_sq, num_room, build_year, max_floor,
 
 plot_missing(small.data)
 plot_missing(small.test)
-tunegrid <- expand.grid(eta = .25,
-                        max_depth = 3,
+set.seed(15)
+tunegrid <- expand.grid(eta = c(.2,.25,.3),
+                        max_depth = c(1, 3, 5, 9),
                         colsample_bytree = .9,
                         subsample = .8,
                         nrounds = 100,
@@ -223,6 +224,7 @@ xgbTree.model <- train(log(price_doc)~.,
                    tuneGrid = tunegrid,
                    trControl = myControl,
                    metric = "rmsle",
+                   maximize = FALSE,
                    preProc = c("center", "scale")
 )
 xgbTree.model
