@@ -59,6 +59,8 @@ There are a total of 292 columns in the training set. There are 41 variables tha
 ```{r}
 train$timestamp <- ymd(train$timestamp)
 test$timestamp <- ymd(test$timestamp)
+
+ggplot(train, aes(x = timestamp, y = price_doc)) + geom_line()
 ```
 
 Next, I want to look at the distribution of the response variable
@@ -186,5 +188,47 @@ p <- ggplot(gg_df, aes(long, lat, group=group)) + theme_classic() +
         plot.title = element_text(hjust = 0.8, face = "bold")) +
   ggtitle(" Click on the map! 👌 ")
 p
+```
+
+```{r}
+custom_summary <- function(data, lev = NULL, model = NULL) {
+out <- Metrics::rmsle(data[, "obs"], data[, "pred"])
+names(out) <- c("rmsle")
+out
+}
+myControl <- trainControl(method = "cv",
+                          number = 10,
+                          summaryFunction = custom_summary)
+
+small.data <- train %>% select(full_sq, life_sq, num_room, build_year, max_floor, state, price_doc)
+small.test <- test %>% select(full_sq, life_sq, num_room, build_year, max_floor, state)
+
+plot_missing(small.data)
+plot_missing(small.test)
+tunegrid <- expand.grid(eta = .25,
+                        max_depth = 3,
+                        colsample_bytree = .9,
+                        subsample = .8,
+                        nrounds = 100,
+                        min_child_weight = 1,
+                        gamma = .075)
+impute <- preProcess(small.data, "medianImpute")
+small.data2 <- predict(impute, small.data)
+
+impute.test <- preProcess(small.test, "medianImpute")
+small.test2 <- predict(impute.test, small.test)
+xgbTree.model <- train(log(price_doc)~.,
+                   data = small.data2,
+                   method = "xgbTree",
+                   tuneGrid = tunegrid,
+                   trControl = myControl,
+                   metric = "rmsle",
+                   preProc = c("center", "scale")
+)
+xgbTree.model
+
+preds <- predict(xgbTree.model, small.test2) %>% exp()
+dat <- data.frame(id = test$id, price_doc = preds)
+write_csv(dat, "xgbTree.csv")
 ```
 
