@@ -2,6 +2,7 @@
 title: "Russian Housing Market"
 output: pdf_document
 ---
+# Russian Housing Market
 
 ```{r}
 library(tidyverse)
@@ -15,12 +16,16 @@ library(plotly)
 library(ggthemes)
 library(mapproj)
 library(ggiraph)
+library(scales)
 ```
+## Exploratory Data Analysis
 
+### Training and Test Set
+
+I will read in the training and test sets and then look to see how many missing values and which variables have missing values. I will see if it is similar between the test and training sets as well. 
 ```{r}
 train <- read.csv("train.csv")
 test <- read.csv("test.csv")
-head(train)
 
 plot_missing(train[, 1:50])
 plot_missing(train[, 51:100])
@@ -38,35 +43,46 @@ missing_vals <- function(x) {
 miss_pct <- map_dbl(train, missing_vals)
 
 miss_pct.df <- data.frame(pct = miss_pct, Variable = names(miss_pct)) %>% 
-    filter(pct > 1)
+    filter(pct > 0)
 
 ggplot(miss_pct.df, aes(x = reorder(Variable, pct), y = pct)) + 
     geom_bar(stat = "identity", fill = "#DA291C") +
-    labs(x = "Percentage of missing values", y = "Variable") +
+    labs(y = "Percentage of missing values", x = "Variable") +
     coord_flip()
-
-
-variable_type <- map_df(train, function(x){sum(is.numeric(x))})
-cat_names <- names(variable_type)[variable_type == 0]
-quant_names <- names(variable_type)[variable_type == 1]
-miss_names <- names(miss_pct)[miss_pct != 0]
-
-sum(cat_names %in% miss_names)
-sum(quant_names %in% miss_names)
 ```
-There are a total of 292 columns in the training set. There are 41 variables that have more than 1% of values missing. There are 10 variables that have missing values, but 1% or less of the observations are missing that value. All 51 categories that have missing values are numeric variables, so there could be values imputed for all of those variables. There are 276 numeric variables and 15 categorical variables and 1 variable that should be a date variable. As a result, I will change the timestamp to a date variable. 
+There are a total of 292 columns in the training set. There are 41 variables that have more than 1% of values missing. There are 10 variables that have missing values, but 1% or less of the observations are missing that value. All 51 categories that have missing values are numeric variables, so there could be values imputed for all of those variables. There are 276 numeric variables and 15 categorical variables and 1 variable that should be a date variable. As a result, I will change the timestamp to a date variable later. 
 
 ```{r}
-train$timestamp <- ymd(train$timestamp)
-test$timestamp <- ymd(test$timestamp)
+plot_missing(test[, 1:50])
+plot_missing(test[, 51:100])
+plot_missing(test[,101:150])
+plot_missing(test[,151:200])
+plot_missing(test[,201:250])
+plot_missing(test[,251:291])
 
-ggplot(train, aes(x = timestamp, y = price_doc)) + geom_line()
+# Although these plots are easy, there are too many variables to have a single plot. As an alternative, I will calculate the percentage of missing values for each variable and then plot the ones that are greater than 0. 
+
+miss_pct_test <- map_dbl(test, missing_vals)
+
+miss_pct_test.df <- data.frame(pct = miss_pct_test, Variable = names(miss_pct_test)) %>% 
+    filter(pct > 0)
+
+ggplot(miss_pct_test.df, aes(x = reorder(Variable, pct), y = pct)) + 
+    geom_bar(stat = "identity", fill = "#DA291C") +
+    labs(y = "Percentage of missing values", x = "Variable") +
+    coord_flip()
 ```
+There are 291 variables in the test set since there is not a variable for the house price. There are 48 variables that have missing values in the test set and 47 of those variables are numeric and one variable is a categorical variable that has missing values. Since only the test set includes missing values for the one categorical variable, I will need to determine if I want to impute values or not include the variable in which ever model is fit to the data. 
+
+## Variable Exploration
+
+### Response Variable
 
 Next, I want to look at the distribution of the response variable
 ```{r}
 ggplot(train, aes(x = price_doc)) + geom_histogram(fill = "firebrick")
 ```
+
 The distribution is skewed right, which isn't surprised when dealing with house prices. Most houses will be a similar price, but there are a small number of houses that are extremely expensive. I will likely use a model that uses the natural log of the sale price becuase it won't be as heavily influenced by the outliers. 
 
 There are still a few outliers, but the distribution of sale price looks a lot better than before. 
@@ -76,7 +92,69 @@ ggplot(train, aes(x= log(price_doc))) + geom_histogram(fill = "firebrick")
 ```
 
 
+
+```{r}
+train$timestamp <- ymd(train$timestamp)
+test$timestamp <- ymd(test$timestamp)
+train <- train %>%
+  mutate(year = year(timestamp),
+         month = month(timestamp, label = TRUE, abbr = FALSE),
+         weekday = weekdays(timestamp),
+         day = day(timestamp))
+
+p1 <- train %>%
+  group_by(year) %>%
+  summarize(med_price = median(price_doc)) %>%
+  ggplot(aes(x = factor(year), y = med_price, fill = factor(year))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_viridis_d() +
+  labs(x = "Year", y = "Median Price") +
+  scale_y_continuous(labels = comma) +
+  theme_pander() +
+  theme(legend.position = "none")
+
+p2 <-  train %>%
+  group_by(month) %>%
+  summarize(med_price = median(price_doc)) %>%
+  ggplot(aes(x = factor(month), y = med_price, fill = factor(month))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_viridis_d() +
+  labs(x = "Month", y = "Median Price") +
+  scale_y_continuous(labels = comma) +
+  theme_pander() +
+  theme(legend.position = "none")
+
+
+p3 <-  train %>%
+  group_by(weekday) %>%
+  summarize(med_price = median(price_doc),
+            count = n()) %>%
+  ggplot(aes(x = factor(weekday), y = count, fill = factor(weekday))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_viridis_d() +
+  labs(x = "Month", y = "Median Price") +
+  scale_y_continuous(labels = comma) +
+  theme_pander() +
+  theme(legend.position = "none")
+p1
+p2
+p3
+```
+
+
+The `full_sq` and `life_sq` variables should be strongly correlated and based off the definitions of these variables, `full_sq` should always be equal to or greater than `life_sq`.
+```{r}
+sum(train$life_sq > train$full_sq, na.rm = TRUE)
+
+train[train$life_sq > train$full_sq, ] %>% filter(!is.na(full_sq)) %>%
+  ggplot(aes(x = full_sq, y = life_sq)) + geom_point()
+```
+
+There are 37 houses that have the `life_sq` which is greater than the `full_sq`, which is not possible according to the definitions of these variables, so I will remove those observations and see what happens. 
+
 I want to visualize the data on maps, so I'm going to start my EDA by doing that. I'm following a lot of this notebook (https://www.kaggle.com/jtremoureux/map-visualizations-with-external-shapefile), but hopefully will do some of my own stuff as well. 
+
+## Map Visualizations
 
 ```{r}
 districts <- read_delim("districts.csv", delim = ";") %>% 
@@ -175,7 +253,7 @@ p1 <- ggplot(gg_df, aes(long, lat, group=group, fill=green_zone_part)) +
   coord_map() + theme_tufte(ticks = FALSE) + 
   scale_fill_gradient(low = "#e5f5e0", high = "#00441b") +
   theme(axis.text = element_blank(), axis.title = element_blank())
-
+p1
 ```
 
 ```{r}
@@ -189,6 +267,9 @@ p <- ggplot(gg_df, aes(long, lat, group=group)) + theme_classic() +
   ggtitle(" Click on the map! 👌 ")
 p
 ```
+
+## Variable Importance
+
 ```{r}
 
 
@@ -208,6 +289,56 @@ rfmod <- train(price_doc ~ . - id - timestamp - incineration_raion,
                importance=TRUE)
 varImp(rfmod)
 ?varImp()
+```
+```{r}
+macro <- read.csv("macro.csv")
+head(macro)
+```
+
+
+## Model Fitting
+
+```{r}
+custom_summary <- function(data, lev = NULL, model = NULL) {
+out <- Metrics::rmsle(data[, "obs"], data[, "pred"])
+names(out) <- c("rmsle")
+out
+}
+myControl <- trainControl(method = "cv",
+                          number = 3,
+                          summaryFunction = custom_summary)
+
+train.model <- train %>% select_if(is.numeric)
+test.model <- test %>% select_if(is.numeric)
+
+impute <- preProcess(train.model, "medianImpute")
+train.model <- predict(impute, train.model)
+impute.test <- preProcess(test.model, "medianImpute")
+test.model <- predict(impute.test, test.model)
+
+
+tunegrid <- expand.grid(eta = .2,
+                        max_depth = 3,
+                        colsample_bytree = .75,
+                        subsample = .95,
+                        nrounds =  400,
+                        min_child_weight = 5,
+                        gamma = .075)
+set.seed(4171996)
+xgbTree.model <- train(log(price_doc)~.,
+                   data = train.model,
+                   method = "xgbTree",
+                   tuneGrid = tunegrid,
+                   trControl = myControl,
+                   metric = "rmsle",
+                   maximize = FALSE,
+                   preProc = c("center", "scale")
+)
+beepr::beep(sound = 8)
+xgbTree.model
+preds <- predict(xgbTree.model, test.model) %>% exp()
+dat <- data.frame(id = test$id, price_doc = preds)
+write_csv(dat, "xgbTree-num2.csv")
 ```
 
 ```{r}
