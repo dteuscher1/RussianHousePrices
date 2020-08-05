@@ -101,6 +101,11 @@ train <- train %>%
          month = month(timestamp, label = TRUE, abbr = FALSE),
          weekday = weekdays(timestamp),
          day = day(timestamp))
+test <- test  %>%
+  mutate(year = year(timestamp),
+         month = month(timestamp, label = TRUE, abbr = FALSE),
+         weekday = weekdays(timestamp),
+         day = day(timestamp))
 
 p1 <- train %>%
   group_by(year) %>%
@@ -291,8 +296,12 @@ varImp(rfmod)
 ?varImp()
 ```
 ```{r}
-macro <- read.csv("macro.csv")
-head(macro)
+macro <- read.csv("macro.csv") %>% select(balance_trade, balance_trade_growth, eurrub, average_provision_of_build_contract,
+micex_rgbi_tr, micex_cbi_tr, deposits_rate, mortgage_value, mortgage_rate,
+income_per_cap, rent_price_4.room_bus, museum_visitis_per_100_cap, apartment_build, timestamp)
+
+train <- train %>% left_join(macro, "timestamp")
+test <- test %>% left_join(macro, "timestamp")
 ```
 
 
@@ -308,6 +317,54 @@ myControl <- trainControl(method = "cv",
                           number = 3,
                           summaryFunction = custom_summary)
 
+train <- train %>% filter(between(price_doc/full_sq, 10000, 600000))
+train.model <- train %>% select_if(is.numeric)
+test.model <- test %>% select_if(is.numeric)
+
+#impute <- preProcess(train.model, "medianImpute")
+#train.model <- predict(impute, train.model)
+#impute.test <- preProcess(test.model, "medianImpute")
+#test.model <- predict(impute.test, test.model)
+
+
+tunegrid <- expand.grid(eta = .2,
+                        max_depth = 3,
+                        colsample_bytree = .75,
+                        subsample = .8,
+                        nrounds =  100,
+                        min_child_weight = 1,
+                        gamma = .075)
+set.seed(4171996)
+xgbTree.model <- train(log(price_doc)~.,
+                   data = train.model,
+                   method = "xgbTree",
+                   tuneGrid = tunegrid,
+                   trControl = myControl,
+                   metric = "rmsle",
+                   maximize = FALSE,
+                   preProc = c("center", "scale"), 
+                   na.action = na.pass
+)
+beepr::beep(sound = 8)
+xgbTree.model
+preds <- predict(xgbTree.model, test.model, na.action = na.pass) %>% exp()
+
+dat <- data.frame(id = test$id, price_doc = preds)
+write_csv(dat, "xgbTree-miss.csv")
+```
+
+
+```{r}
+custom_summary <- function(data, lev = NULL, model = NULL) {
+out <- Metrics::rmsle(data[, "obs"], data[, "pred"])
+names(out) <- c("rmsle")
+out
+}
+myControl <- trainControl(method = "cv",
+                          number = 3,
+                          summaryFunction = custom_summary)
+
+train <- train %>% filter(between(price_doc/full_sq, 10000, 600000))
 train.model <- train %>% select_if(is.numeric)
 test.model <- test %>% select_if(is.numeric)
 
@@ -320,9 +377,9 @@ test.model <- predict(impute.test, test.model)
 tunegrid <- expand.grid(eta = .2,
                         max_depth = 3,
                         colsample_bytree = .75,
-                        subsample = .95,
-                        nrounds =  400,
-                        min_child_weight = 5,
+                        subsample = .8,
+                        nrounds =  100,
+                        min_child_weight = 1,
                         gamma = .075)
 set.seed(4171996)
 xgbTree.model <- train(log(price_doc)~.,
@@ -337,6 +394,7 @@ xgbTree.model <- train(log(price_doc)~.,
 beepr::beep(sound = 8)
 xgbTree.model
 preds <- predict(xgbTree.model, test.model) %>% exp()
+head(test.model)
 dat <- data.frame(id = test$id, price_doc = preds)
 write_csv(dat, "xgbTree-num2.csv")
 ```
