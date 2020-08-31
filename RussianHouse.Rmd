@@ -17,6 +17,7 @@ library(ggthemes)
 library(mapproj)
 library(ggiraph)
 library(scales)
+library(patchwork)
 ```
 ## Exploratory Data Analysis
 
@@ -127,7 +128,8 @@ p2 <-  train %>%
   labs(x = "Month", y = "Median Price") +
   scale_y_continuous(labels = comma) +
   theme_pander() +
-  theme(legend.position = "none")
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45))
 
 
 p3 <-  train %>%
@@ -137,29 +139,27 @@ p3 <-  train %>%
   ggplot(aes(x = factor(weekday), y = count, fill = factor(weekday))) + 
   geom_bar(stat = "identity") + 
   scale_fill_viridis_d() +
-  labs(x = "Month", y = "Median Price") +
+  labs(x = "Weekday", y = "Median Price") +
   scale_y_continuous(labels = comma) +
   theme_pander() +
-  theme(legend.position = "none")
-p1
-p2
-p3
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45))
+ (p1 +p3) /p2
 ```
 
 
 The `full_sq` and `life_sq` variables should be strongly correlated and based off the definitions of these variables, `full_sq` should always be equal to or greater than `life_sq`.
 ```{r}
-sum(train$life_sq > train$full_sq, na.rm = TRUE)
+sq.outlier <- train$life_sq > train$full_sq
 
-train[train$life_sq > train$full_sq, ] %>% filter(!is.na(full_sq)) %>%
-  ggplot(aes(x = full_sq, y = life_sq)) + geom_point()
 ```
 
-There are 37 houses that have the `life_sq` which is greater than the `full_sq`, which is not possible according to the definitions of these variables, so I will remove those observations and see what happens. 
+There are 37 houses that have the `life_sq` which is greater than the `full_sq`, which is not possible according to the definitions of these variables, so I will remove those observations and see what happens. Another option is to just set the `life_sq` value to the amount for the `full_sq` for those observations
 
-I want to visualize the data on maps, so I'm going to start my EDA by doing that. I'm following a lot of this notebook (https://www.kaggle.com/jtremoureux/map-visualizations-with-external-shapefile), but hopefully will do some of my own stuff as well. 
 
 ## Map Visualizations
+
+I want to visualize the data using maps as well. I'm following a lot of this notebook (https://www.kaggle.com/jtremoureux/map-visualizations-with-external-shapefile), but there will be some of my own work as well. 
 
 ```{r}
 districts <- read_delim("districts.csv", delim = ";") %>% 
@@ -183,9 +183,9 @@ mo_shp$district <- mo_data$`Russian Name`
 mo_shp$area <- mo_data$Russian
 mo_shp$district <- factor(mo_shp$district)
 mo_shp$area <- factor(mo_shp$area)
-head(mo_shp)
 ```
 
+The first two maps are simple maps that show the different administrative areas of Moscow and the district that each one belongs to. The first map uses base R plots and the second plot uses `sp` package. These plots can be changed from Russian to English. Most of the names in the dataset are the Russian names spelled with Latin letters, but I included a dataset that has the Russian equivalent names and I've used those for the administrative areas and districts. The `OKRUGS` variable has the English version of the district and the `RAION` variable has the English version of the administrative area. 
 ```{r}
 okrugs_pal <- brewer.pal(12, "Paired") # Define a nice color palette with RColorBrewer
 plot(mo_shp, border = "#57595b", col = okrugs_pal[as.numeric(mo_shp$district)], main = "Округи и Районы")
@@ -199,8 +199,7 @@ spplot(mo_shp, c("district"), main = "Округи и районы Москвы"
 ```
 
 I will add some summary characteristics of houses in each area
-```{r}
-head(train)
+```{r, warning=FALSE, message=FALSE}
 
 area_frame <- train %>%
     group_by(sub_area) %>%
@@ -213,18 +212,11 @@ area_frame <- train %>%
               AvgInd = mean(indust_part),
               AvgWorkAge = mean(work_all),
               Bld19 = mean(build_count_after_1995))
-str(train)
-area_frame
-head(area_frame)
-head(mo_shp)
+
 mo_data <- mo_data %>% left_join(area_frame, by = c("RAION" = "sub_area"))
-area_frame
-head(mo_data)
 mo_shp@data <- mo_data
 mo_shp$build_year <- mo_data$MedYr
 mo_shp$AvgSalePrice <- mo_data$AvgSalePrice
-mo_shp$AvgSqFt
-head(mo_shp)
 ncolors <- 15
 pal3 <- colorRampPalette(c("grey90", "red"))(ncolors)
 spplot(mo_shp, c("AvgPop"), main = "Transaction prices", col.regions = pal3,
@@ -244,13 +236,12 @@ mo_shp@data <- mo_data
 
 mo_df <- mo_shp %>% fortify(region = 'Russian')
 mo_df$id <- as.factor(mo_df$id)
-head(mo_df)
 gg_df <- full_join(mo_df, mo_shp@data, by = c("id" = "Russian"))
 
-head(gg_df)
 p2 <- ggplot(data=gg_df, mapping=aes(x=long, y=lat, group=group, fill=log(AvgSalePrice))) + geom_polygon(color=NA) + scale_fill_distiller(palette="RdBu") + xlab("Lon") + ylab("Lat") + labs(fill="Log(Sale Price)") + coord_map()
 
-ggplotly(p2)
+p2
+
 p1 <- ggplot(gg_df, aes(long, lat, group=group, fill=green_zone_part)) +
   theme_classic() +
   geom_polygon() +
@@ -259,19 +250,36 @@ p1 <- ggplot(gg_df, aes(long, lat, group=group, fill=green_zone_part)) +
   scale_fill_gradient(low = "#e5f5e0", high = "#00441b") +
   theme(axis.text = element_blank(), axis.title = element_blank())
 p1
+
+ggplot(gg_df, aes(long, lat, group=group, fill=PriceSqft)) +
+  theme_classic() +
+  geom_polygon() +
+  geom_path(color="white", size = 0.05) +
+  coord_map() + theme_tufte(ticks = FALSE) + 
+  scale_fill_gradient() +
+  theme(axis.text = element_blank(), axis.title = element_blank())
 ```
 
 ```{r}
+
+gg_df$ttip <- paste0(
+  "<b>", gg_df$id, "</b> : ",
+  prettyNum(gg_df$raion_popul, big.mark = " "), " inhabitants.")
+
 p <- ggplot(gg_df, aes(long, lat, group=group)) + theme_classic() +
-  geom_polygon_interactive(aes(fill=raion_popul, # javascript to run on click
+  geom_polygon_interactive(aes(fill=raion_popul,
+                               tooltip = ttip,
                                data_id = id)) + # column associated to polygon element
   coord_map() + theme_tufte(ticks = FALSE) +
-  scale_fill_continuous(low = "#f7f4f9", high = "#980043") +
+  scale_fill_gradient2(low = "blue", high = "red") +
   theme(axis.text = element_blank(), axis.title = element_blank(),
-        plot.title = element_text(hjust = 0.8, face = "bold")) +
-  ggtitle(" Click on the map! 👌 ")
+        plot.title = element_text(hjust = 0.8, face = "bold"))
 p
+
+ggiraph(code = {print(p)}, hover_css = "fill:#67001f;stroke:black;stroke-width:2;")
+
 ```
+
 
 ## Variable Importance
 
