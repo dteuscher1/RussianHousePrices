@@ -44,7 +44,7 @@ missing_vals <- function(x) {
 miss_pct <- map_dbl(train, missing_vals)
 
 miss_pct.df <- data.frame(pct = miss_pct, Variable = names(miss_pct)) %>% 
-    filter(pct > 0)
+    filter(pct > 1)
 
 ggplot(miss_pct.df, aes(x = reorder(Variable, pct), y = pct)) + 
     geom_bar(stat = "identity", fill = "#DA291C") +
@@ -264,19 +264,35 @@ ggplot(gg_df, aes(long, lat, group=group, fill=PriceSqft)) +
 
 gg_df$ttip <- paste0(
   "<b>", gg_df$id, "</b> : ",
-  prettyNum(gg_df$raion_popul, big.mark = " "), " inhabitants.")
+  prettyNum(gg_df$raion_popul, big.mark = ","), " inhabitants.")
+gg_df$ttip2 <- paste0(
+  "<b>", gg_df$id, "</b> : ",
+  prettyNum(gg_df$AvgSalePrice, big.mark = ","), " inhabitants.")
+
+```
+
+```{r}
 
 p <- ggplot(gg_df, aes(long, lat, group=group)) + theme_classic() +
   geom_polygon_interactive(aes(fill=raion_popul,
                                tooltip = ttip,
                                data_id = id)) + # column associated to polygon element
   coord_map() + theme_tufte(ticks = FALSE) +
-  scale_fill_gradient2(low = "blue", high = "red") +
+  scale_fill_distiller(palette = "RdYlBu", name = "Population") +
   theme(axis.text = element_blank(), axis.title = element_blank(),
         plot.title = element_text(hjust = 0.8, face = "bold"))
-p
 
-ggiraph(code = {print(p)}, hover_css = "fill:#67001f;stroke:black;stroke-width:2;")
+
+p1 <- ggplot(gg_df, aes(long, lat, group=group)) + theme_classic() +
+  geom_polygon_interactive(aes(fill=AvgSalePrice,
+                               tooltip = ttip2,
+                               data_id = id)) + # column associated to polygon element
+  coord_map() + theme_tufte(ticks = FALSE) +
+  scale_fill_distiller(palette = "RdYlBu", name = "Average Price") +
+  theme(axis.text = element_blank(), axis.title = element_blank(),
+        plot.title = element_text(hjust = 0.8, face = "bold"))
+ggiraph(code = {print(p)}, hover_css = "fill:#000000;stroke:black;stroke-width:2;")
+ggiraph(code = {print(p1)}, hover_css = "fill:#000000;stroke:black;stroke-width:2;")
 
 ```
 
@@ -284,8 +300,6 @@ ggiraph(code = {print(p)}, hover_css = "fill:#67001f;stroke:black;stroke-width:2
 ## Variable Importance
 
 ```{r}
-
-
 #Get complete cases of dtrain
 completes <- complete.cases(train)
 
@@ -301,13 +315,12 @@ rfmod <- train(price_doc ~ . - id - timestamp - incineration_raion,
                tuneLength=1,
                importance=TRUE)
 varImp(rfmod)
-?varImp()
 ```
-```{r}
-macro <- read.csv("macro.csv") %>% select(balance_trade, balance_trade_growth, eurrub, average_provision_of_build_contract,
-micex_rgbi_tr, micex_cbi_tr, deposits_rate, mortgage_value, mortgage_rate,
-income_per_cap, rent_price_4.room_bus, museum_visitis_per_100_cap, apartment_build, timestamp)
 
+```{r}
+macro <- read.csv("macro.csv")
+
+macro$timestamp <- ymd(macro$timestamp)
 train <- train %>% left_join(macro, "timestamp")
 test <- test %>% left_join(macro, "timestamp")
 ```
@@ -324,8 +337,10 @@ out
 myControl <- trainControl(method = "cv",
                           number = 3,
                           summaryFunction = custom_summary)
+train$full_sq[train$full_sq == 0] <- 50
 
 train <- train %>% filter(between(price_doc/full_sq, 10000, 600000))
+
 train.model <- train %>% select_if(is.numeric)
 test.model <- test %>% select_if(is.numeric)
 
@@ -339,7 +354,7 @@ tunegrid <- expand.grid(eta = .2,
                         max_depth = 3,
                         colsample_bytree = .75,
                         subsample = .8,
-                        nrounds =  100,
+                        nrounds =  c(100, 300, 400),
                         min_child_weight = 1,
                         gamma = .075)
 set.seed(4171996)
@@ -350,7 +365,7 @@ xgbTree.model <- train(log(price_doc)~.,
                    trControl = myControl,
                    metric = "rmsle",
                    maximize = FALSE,
-                   preProc = c("center", "scale"), 
+                   preProc = c("zv","center", "scale"), 
                    na.action = na.pass
 )
 beepr::beep(sound = 8)
@@ -358,8 +373,9 @@ xgbTree.model
 preds <- predict(xgbTree.model, test.model, na.action = na.pass) %>% exp()
 
 dat <- data.frame(id = test$id, price_doc = preds)
-write_csv(dat, "xgbTree-miss.csv")
+write_csv(dat, "xgbTree-macro.csv")
 ```
+
 
 
 ```{r}
